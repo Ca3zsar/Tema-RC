@@ -219,7 +219,16 @@ int check_password(char *actual_password)
 
 void new_register(char *username)
 {
+    char password[20];
+    printf("\nPlease enter your passowrd: ");
+    scanf(" %s",password);
+    
+    FILE *registerFile = fopen("users.txt","a");
+    fprintf(registerFile,"%s : %s\n",username,password);
 
+    int length = strlen("Account created successfully : ");
+    answer = realloc(answer,length + strlen(username) + 2);
+    sprintf(answer,"Account created successfully : %s\n",username);
 }
 
 void login(char *username)
@@ -258,7 +267,7 @@ void login(char *username)
         }else{
             printf("\nEnter your name, please: ");
             char new_name[20];
-            scanf("%[^\n]s",new_name);
+            scanf(" %s",new_name);
             new_register(new_name);
         }
         
