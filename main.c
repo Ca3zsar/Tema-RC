@@ -17,6 +17,8 @@
 char *answer; //Used for storing all the found files.
 char fifoFile[] = "fifoFile";
 
+int charIndex;
+
 int check_name(char *text, char *pattern)
 {
     if(strstr(text,pattern) != NULL)
@@ -42,6 +44,32 @@ char* get_permissions(struct stat fileStat)
     permissions[10]='\0';
 
     return permissions;
+}
+
+char** parse_text(char *text)
+{
+    char *token;
+    char **parameters = (char**)malloc(2*sizeof(char*));
+    charIndex = 0;
+
+    token=strtok(text, ": \n");
+    while( token != NULL)
+    {
+        parameters[charIndex] = (char*)malloc(strlen(token));
+        strcpy(parameters[charIndex],token);
+        charIndex++;
+        token = strtok(NULL, ": ");
+    }
+    
+    if(charIndex==2){
+        char *pos;
+        if ((pos=strchr(parameters[1], '\n')) != NULL)
+        {
+            *pos = '\0';
+        }
+    }
+
+    return parameters;
 }
 
 void write_fifo(char *newAnswer, int answer_length)
@@ -169,15 +197,75 @@ void statFile(char *fileName)
     sprintf(answer,"%s%s%s%s%s%s%s%s%s",name,permissions,size,uid,gid,links,lastAccessed,lastModified,lastChanged);
 }
 
-void login(char *username)
+void set_answer(char *text)
 {
-    
+    int length = strlen(text);
+    answer = realloc(answer,length + 1);
+    sprintf(answer,"%s",text);
+}
+
+int check_password(char *actual_password)
+{
+    char candidate[20];
+    printf("\nEnter the password: ");
+
+    scanf("%[^\n]s",candidate);
+
+    if(strcmp(candidate,actual_password) == 0)
+    {
+        return 1;
+    }else return 0;
 }
 
 void new_register(char *username)
 {
 
 }
+
+void login(char *username)
+{
+    FILE *loginFile = fopen("users.txt","r");
+    char line[200];
+
+    int existent_user = 0;
+
+    while(fgets(line,200,loginFile) != NULL )
+    {
+        char **parameters = (char**)malloc(2*sizeof(char*));
+        parameters = parse_text(line);
+        if(strcmp(parameters[0],username)==0)
+        {
+            if(check_password(parameters[1]))
+            {
+                int length = strlen("Successfully logged in : ");
+                answer = realloc(answer,length + strlen(parameters[0]) + 2);
+                sprintf(answer,"Succesfully logged in : %s\n",parameters[0]);
+            }else{
+                set_answer("Incorrect password!\n");
+            }
+
+            existent_user = 1;
+        }
+    }
+    if(!existent_user)
+    {
+        printf("User not existent, want to register? [Y/N] ");
+        char res;
+        scanf("%c",&res);
+        if(res == 'N')
+        {
+            set_answer("OK\n");
+        }else{
+            printf("\nEnter your name, please: ");
+            char new_name[20];
+            scanf("%[^\n]s",new_name);
+            new_register(new_name);
+        }
+        
+    }
+}
+
+
 
 void sonLobby(char *command)
 {
@@ -188,21 +276,9 @@ void sonLobby(char *command)
     answer = (char*)malloc(sizeof(char*));
 
     // Parse the command.
-    char *token;
-    char *parameters[2];
-    int index = 0;
-
-    token=strtok(command, ": \n");
-    while( token != NULL)
-    {
-        parameters[index] = (char*)malloc(strlen(token));
-        strcpy(parameters[index],token);
-        index++;
-        token = strtok(NULL, ": ");
-    }
-
+    char **parameters = parse_text(command);
     // Two words were not sent.
-    if(index!=2)
+    if(charIndex!=2)
     {
         if(!(strcmp(parameters[0],"login") && strcmp(parameters[0],"myfind") &&
             strcmp(parameters[0],"mystat")))
@@ -341,12 +417,6 @@ int main()
         // scanf("%[^\n]s",command);
         if(command[0]=='\n')continue;
 
-        //Get rid of the last newline.
-        char *pos;
-        if ((pos=strchr(command, '\n')) != NULL)
-        {
-            *pos = '\0';
-        }
         if(pipe(pipeSon)<0)
         {
             perror("ERROR AT PIPE IN THE FAHTER");
