@@ -30,17 +30,17 @@ int check_name(char *text, char *pattern)
 
 char* get_permissions(struct stat fileStat)
 {
+    char letters[4]="rwx";
+    int flags[]={0, S_IRUSR, S_IWUSR, S_IXUSR, S_IRGRP, S_IWGRP, S_IXGRP,
+                S_IROTH, S_IWOTH, S_IXOTH};
     char* permissions = (char*)malloc(11);
     permissions[0] = S_ISDIR(fileStat.st_mode) ? 'd' : '-';
-    permissions[1] = fileStat.st_mode & S_IRUSR ? 'r' : '-';
-    permissions[2] = fileStat.st_mode & S_IWUSR ? 'w' : '-';
-    permissions[3] = fileStat.st_mode & S_IXUSR ? 'x' : '-';
-    permissions[4] = fileStat.st_mode & S_IRGRP ? 'r' : '-';
-    permissions[5] = fileStat.st_mode & S_IWGRP ? 'w' : '-';
-    permissions[6] = fileStat.st_mode & S_IXGRP ? 'x' : '-';
-    permissions[7] = fileStat.st_mode & S_IROTH ? 'r' : '-';
-    permissions[8] = fileStat.st_mode & S_IWOTH ? 'w' : '-';
-    permissions[9] = fileStat.st_mode & S_IXOTH ? 'x' : '-';
+
+    for(int i=1;i<10;i++)
+    {
+        permissions[i] = fileStat.st_mode & flags[i] ? letters[(i-1)%3] : '-';
+
+    }
     permissions[10]='\0';
 
     return permissions;
@@ -268,7 +268,7 @@ void login(char *username, char *password)
     }
 }
 
-void sonLobby(char *command)
+void sonLobby(char *command, int notLogged)
 {
     pid_t pidNephew;
     int socketP[2]; 
@@ -363,26 +363,41 @@ void sonLobby(char *command)
         }
 
         int valid = 0;
+        if(notLogged & !strcmp(words[0], "login"))
+        {
 
+        }
         // See what function to call.
-        if(strcmp(words[0],"myfind") == 0)
+        if(strcmp(words[0],"myfind") == 0) 
         {
             if(charIndex==2){
-                findFiles("..",words[1],"/");
+                if(!notLogged){
+                    findFiles("..",words[1],"/");
+                }else{
+                    set_answer("You have to be logged in!");
+                }
                 valid=1;
         }
         }
         if(strcmp(words[0],"mystat") == 0)
         {
             if(charIndex==2){
-                statFile(words[1]);
+                if(!notLogged){
+                    statFile(words[1]);
+                }else{
+                    set_answer("You have to be logged in!");
+                }
                 valid=1;
             }
         }
         if(strcmp(words[0],"login") == 0)
         {
             if(charIndex==3){
-                login(words[1],words[2]);
+                if(notLogged){
+                    login(words[1],words[2]);
+                }else{
+                    set_answer("Already logged in!");
+                }
                 valid=1;
             }
         }
@@ -416,6 +431,7 @@ int main()
     pid_t sonPid;
     char command[255];
 
+    int notLogged =1; // Check if the user is logged in.
     int pipeSon[2];
     
     /*I will use 3 ways for communication:
@@ -454,9 +470,18 @@ int main()
             // Write to the son through the pipe //
             // ---------------------------- //
             close(pipeSon[0]);
+            int command_length = strlen(command);
+            if(write(pipeSon[1],&command_length,sizeof(int)) <0 )
+            {
+                perror("ERROR AT WRITING IN PIPE TO SON (length of command)");
+            }
             if(write(pipeSon[1],command,strlen(command)) <0 )
             {
                 perror("ERROR AT WRITING IN PIPE TO SON");
+            }
+            if(write(pipeSon[1],&notLogged,sizeof(int)) <0 )
+            {
+                perror("ERROR AT WRITING IN PIPE TO SON (the login variable)");
             }
             close(pipeSon[1]);
             // ---------------------------- //
@@ -493,7 +518,7 @@ int main()
                 // Clears the screen.
                 printf("\e[1;1H\e[2J");
             }else{
-
+                if(strstr(finalAnswer,"Successfully"))notLogged=0;
                 printf("%s\n",finalAnswer);
                 printf("------------\n");
 
@@ -507,14 +532,27 @@ int main()
 
             // Read from the parent through the pipe.
             int nread;
-            if((nread =read(pipeSon[0],newCommand,255)) < 0)
+            int notLogged;
+            int length;
+
+            if((read(pipeSon[0],&length,sizeof(int))) < 0)
+            {
+                perror("ERROR AT READING FROM PIPE FROM FATHER");
+            }
+
+            if((nread = read(pipeSon[0],newCommand,length)) < 0)
             {
                 perror("ERROR AT READING FROM PIPE FROM FATHER");
             }
             newCommand[nread] = '\0';
 
+            if((read(pipeSon[0],&notLogged,sizeof(int))) < 0)
+            {
+                perror("ERROR AT READING FROM PIPE FROM FATHER");
+            }
+
             close(pipeSon[0]);
-            sonLobby(newCommand);
+            sonLobby(newCommand,notLogged);
         }   
     }
 }
