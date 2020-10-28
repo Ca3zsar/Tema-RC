@@ -1,12 +1,12 @@
-#include <stdlib.h>
 #include <errno.h>
-#include <string.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <unistd.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
+
+#include <unistd.h>
+#include <string.h>
 #include <dirent.h>
 #include <time.h>
 
@@ -49,7 +49,7 @@ char* get_permissions(struct stat fileStat)
 char** parse_text(char *text)
 {
     char *token;
-    char **parameters = (char**)malloc(2*sizeof(char*));
+    char **parameters = (char**)malloc(4*sizeof(char*));
     charIndex = 0;
 
     token=strtok(text, ": \n");
@@ -61,15 +61,32 @@ char** parse_text(char *text)
         token = strtok(NULL, ": ");
     }
     
-    if(charIndex==2){
-        char *pos;
-        if ((pos=strchr(parameters[1], '\n')) != NULL)
+    char *pos;
+    if ((pos=strchr(parameters[charIndex-1], '\n')) != NULL)
+    {
+        *pos = '\0';
+    }
+    
+
+    return parameters;
+}
+
+char* check_existent_user(char *user)
+{
+    FILE *loginFile = fopen("users.txt","r");
+    char line[200];
+
+    while(fgets(line,200,loginFile) != NULL )
+    {
+        char **parameters = (char**)malloc(2*sizeof(char*));
+        parameters = parse_text(line);
+        if(strcmp(parameters[0],user)==0)
         {
-            *pos = '\0';
+            return parameters[1];
         }
     }
 
-    return parameters;
+    return NULL;
 }
 
 void write_fifo(char *newAnswer, int answer_length)
@@ -86,6 +103,14 @@ void write_fifo(char *newAnswer, int answer_length)
     write(fdFifo,newAnswer,answer_length);
 
     close(fdFifo);
+}
+
+void set_answer(char *text)
+{
+    int length = strlen(text);
+    int current_length = strlen(answer);
+    answer = realloc(answer,current_length + length + 1);
+    sprintf(answer+current_length,"%s",text);
 }
 
 void findFiles(char* directory, char *fileName,char *path)
@@ -128,33 +153,31 @@ void findFiles(char* directory, char *fileName,char *path)
             {
                 // Reallocate memory for 'answer' so the new file, its last acces time, last modification time and size
                 // be written
-                int prevLength = strlen(answer);
                 char *lastAccessed = ctime(&stats.st_atime);
                 char *lastModified = ctime(&stats.st_mtime);
                 // Get the size of file.
                 char size[10];
-                sprintf(size,"%ld",stats.st_size);
+                sprintf(size,"%ld\n",stats.st_size);
                 size[strlen(size)] = '\0';
 
                 // Get the permissions of the file.
                 char *permissions = get_permissions(stats);
 
-                answer = realloc(answer,
-                        strlen(answer)+strlen(dirEntry->d_name)+strlen(path)+strlen(lastAccessed)
-                        +strlen(lastModified) + strlen(size) + strlen(permissions) + 5);
-
-                sprintf(answer+prevLength,"%s%s\n%s\n%s\n%s%s\n",
-                        path,dirEntry->d_name,size,permissions,lastAccessed,lastModified);
-                answer[strlen(answer)] = '\0';
-
+                set_answer(path);
+                set_answer(dirEntry->d_name);
+                set_answer("\n");
+                set_answer(size);
+                set_answer(permissions);
+                set_answer("\n");
+                set_answer(lastAccessed);
+                set_answer(lastModified);
+                set_answer("\n");
             }
         }
     }
     //Go to the previous directory, and close the current one.
     chdir("..");
     closedir(current_directory);
-
-
 }
 
 void statFile(char *fileName)
@@ -191,90 +214,59 @@ void statFile(char *fileName)
     sprintf(lastModified,"Last time modified: %s",ctime(&stats.st_mtime));
     sprintf(lastChanged,"Last time changed: %s",ctime(&stats.st_ctime));
 
-    answer = realloc(answer,
-                        strlen(name)+strlen(size)+strlen(uid)+strlen(gid)+strlen(links)+strlen(permissions)
-                        +strlen(lastAccessed) + strlen(lastModified) + strlen(lastChanged) + 5);
-    sprintf(answer,"%s%s%s%s%s%s%s%s%s",name,permissions,size,uid,gid,links,lastAccessed,lastModified,lastChanged);
+    set_answer(name);
+    set_answer(size);
+    set_answer(uid);
+    set_answer(gid);
+    set_answer(links);
+    set_answer(permissions);
+    set_answer(lastAccessed);
+    set_answer(lastModified);
+    set_answer(lastChanged);
 }
 
-void set_answer(char *text)
+int check_password(char *actual_password, char *candidate)
 {
-    int length = strlen(text);
-    answer = realloc(answer,length + 1);
-    sprintf(answer,"%s",text);
-}
-
-int check_password(char *actual_password)
-{
-    char candidate[20];
-    printf("\nEnter the password: ");
-
-    scanf("%[^\n]s",candidate);
-
     if(strcmp(candidate,actual_password) == 0)
     {
         return 1;
     }else return 0;
 }
 
-void new_register(char *username)
-{
-    char password[20];
-    printf("\nPlease enter your passowrd: ");
-    scanf(" %s",password);
-    
+void new_register(char *username,char *password)
+{   
+    char *verify = check_existent_user(username);
+    if(verify != NULL)
+    {
+        set_answer("User already registered.\n");
+        return;
+    }
+
     FILE *registerFile = fopen("users.txt","a");
     fprintf(registerFile,"%s : %s\n",username,password);
 
-    int length = strlen("Account created successfully : ");
-    answer = realloc(answer,length + strlen(username) + 2);
-    sprintf(answer,"Account created successfully : %s\n",username);
+    set_answer("Account created successfully : ");
+    set_answer(username);
 }
 
-void login(char *username)
+void login(char *username, char *password)
 {
-    FILE *loginFile = fopen("users.txt","r");
-    char line[200];
+    char *actual_password = check_existent_user(username);
 
-    int existent_user = 0;
-
-    while(fgets(line,200,loginFile) != NULL )
+    if(actual_password == NULL)
     {
-        char **parameters = (char**)malloc(2*sizeof(char*));
-        parameters = parse_text(line);
-        if(strcmp(parameters[0],username)==0)
-        {
-            if(check_password(parameters[1]))
-            {
-                int length = strlen("Successfully logged in : ");
-                answer = realloc(answer,length + strlen(parameters[0]) + 2);
-                sprintf(answer,"Succesfully logged in : %s\n",parameters[0]);
-            }else{
-                set_answer("Incorrect password!\n");
-            }
-
-            existent_user = 1;
-        }
+        set_answer("User not registered.\n");
+        return ;
     }
-    if(!existent_user)
+
+    if(check_password(password, actual_password))
     {
-        printf("User not existent, want to register? [Y/N] ");
-        char res;
-        scanf("%c",&res);
-        if(res == 'N')
-        {
-            set_answer("OK\n");
-        }else{
-            printf("\nEnter your name, please: ");
-            char new_name[20];
-            scanf(" %s",new_name);
-            new_register(new_name);
-        }
-        
+        set_answer("Successfully logged in: ");
+        set_answer(username);
+    }else{
+        set_answer("Incorrect password!\n");
     }
 }
-
-
 
 void sonLobby(char *command)
 {
@@ -286,11 +278,11 @@ void sonLobby(char *command)
 
     // Parse the command.
     char **parameters = parse_text(command);
-    // Two words were not sent.
-    if(charIndex!=2)
+    // Take in consideration special cases.
+    if(charIndex<2)
     {
         if(!(strcmp(parameters[0],"login") && strcmp(parameters[0],"myfind") &&
-            strcmp(parameters[0],"mystat")))
+            strcmp(parameters[0],"mystat") && strcmp(parameters[0],"register")))
         {
             write_fifo("Missing Parameter.\n",20);
         }else{
@@ -298,7 +290,12 @@ void sonLobby(char *command)
             {
                 write_fifo("QUIT",5);
             }else{
-                write_fifo("Invalid command.\n",18);
+                if(!strcmp(parameters[0],"clear"))
+                {
+                    write_fifo("CLEAR",6);
+                }else{
+                    write_fifo("Invalid command.\n",18);
+                }
             }
         }
         exit(0);
@@ -318,18 +315,17 @@ void sonLobby(char *command)
     if(pidNephew) // Parent
     {
         close(socketP[0]);
-        if(write(socketP[1], parameters[0], strlen(parameters[0])) <0)
+        for(int i=0;i<charIndex;i++)
         {
-            perror("ERROR AT WRITING COMMAND IN SON");
-        }
-
-        // Wait for response from the nephew.
-        int response;
-        while(read(socketP[1],&response,sizeof(int)) <= 0);
-
-        if(write(socketP[1], parameters[1], strlen(parameters[1])) <0)
-        {
-            perror("ERROR AT WRITING PARAMETER IN SON");
+            int length = strlen(parameters[i]);
+            if(write(socketP[1], &length, sizeof(int)) <0)
+            {
+                perror("ERROR AT WRITING COMMAND IN SON");
+            }
+            if(write(socketP[1], parameters[i], length) <0)
+            {
+                perror("ERROR AT WRITING COMMAND IN SON");
+            }
         }
 
         wait(NULL);
@@ -348,44 +344,54 @@ void sonLobby(char *command)
         exit(0);
     }else{  // Child
         close(socketP[1]);
-        char newCommand[255];
-        char parameter[255];
 
-        int nread;
-
-        if((nread = read(socketP[0],newCommand,255)) < 0)
+        char **words;
+        words = (char**)malloc(charIndex*(sizeof(char*)));
+        for(int i=0;i<charIndex;i++)
         {
-            perror("ERROR AT READING COMMAND IN NEPHEW");
+            int length;
+            if(read(socketP[0], &length, sizeof(int)) <0)
+            {
+                perror("ERROR AT WRITING COMMAND IN SON");
+            }
+            words[i] = (char*)malloc(length);
+            if(read(socketP[0], words[i], length) <0)
+            {
+                perror("ERROR AT WRITING COMMAND IN SON");
+            }
+            words[i][length]='\0';
         }
-        newCommand[nread] = '\0';
-
-        // Send a response to the son that the nephew read the command.
-        int response = 1;
-        write(socketP[0],&response,sizeof(int));
-
-        if((nread = read(socketP[0],parameter,254)) < 0)
-        {
-            perror("ERROR AT READING PARAMETER IN NEPHEW");
-        }
-        parameter[nread] = '\0';
 
         int valid = 0;
 
         // See what function to call.
-        if(strcmp(newCommand,"myfind") == 0)
+        if(strcmp(words[0],"myfind") == 0)
         {
-            findFiles("..",parameter,"/");
-            valid=1;
+            if(charIndex==2){
+                findFiles("..",words[1],"/");
+                valid=1;
         }
-        if(strcmp(newCommand,"mystat") == 0)
-        {
-            statFile(parameter);
-            valid=1;
         }
-        if(strcmp(newCommand,"login") == 0)
+        if(strcmp(words[0],"mystat") == 0)
         {
-            login(parameter);
-            valid=1;
+            if(charIndex==2){
+                statFile(words[1]);
+                valid=1;
+            }
+        }
+        if(strcmp(words[0],"login") == 0)
+        {
+            if(charIndex==3){
+                login(words[1],words[2]);
+                valid=1;
+            }
+        }
+        if(strcmp(words[0],"register") == 0)
+        {
+            if(charIndex==3){
+                new_register(words[1],words[2]);
+                valid=1;
+            }
         }
 
         if(valid)
@@ -411,9 +417,7 @@ int main()
     char command[255];
 
     int pipeSon[2];
-    // findFiles(getenv("HOME"),wantedFile,"/");
-
-    // printf("%s",answer);
+    
     /*I will use 3 ways for communication:
     1. Pipe to send data to the first child.
     2. Fifo to send data from the first child to father.
@@ -484,11 +488,18 @@ int main()
                 exit(0);
             }
 
-            printf("%s\n",finalAnswer);
-            printf("------------\n");
+            if(!strcmp(finalAnswer,"CLEAR"))
+            {
+                // Clears the screen.
+                printf("\e[1;1H\e[2J");
+            }else{
 
-            close(fdFifo);
-            wait(NULL);
+                printf("%s\n",finalAnswer);
+                printf("------------\n");
+
+                close(fdFifo);
+                wait(NULL);
+            }
             
         }else{
             close(pipeSon[1]);
